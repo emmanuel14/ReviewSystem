@@ -1,6 +1,6 @@
 <?php
 require_once 'config.php';
-require_login();
+// require_login();
 
 $conn = getDBConnection();
 $user_department = $_SESSION['department'];
