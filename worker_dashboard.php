@@ -1,6 +1,6 @@
 <?php
 require_once 'config.php';
-// require_login();
+require_login();
 
 $conn = getDBConnection();
 $user_department = $_SESSION['department'];
@@ -13,18 +13,21 @@ $error_message = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_review'])) {
     $rating = intval($_POST['rating'] ?? 0);
     $comment = trim($_POST['comment'] ?? '');
+    $review_department = trim($_POST['review_department'] ?? '');
     
     if ($rating < 1 || $rating > 5) {
         $error_message = 'Please select a valid rating (1-5 stars).';
     } elseif (empty($comment)) {
         $error_message = 'Please provide a comment.';
+    } elseif (empty($review_department)) {
+        $error_message = 'Please select a department to review.';
     } else {
         $stmt = $conn->prepare("INSERT INTO reviews (reviewer_name, reviewer_department, rating, comment) VALUES (?, ?, ?, ?)");
-        $stmt->bind_param("ssis", $user_name, $user_department, $rating, $comment);
+        $stmt->bind_param("ssis", $user_name, $review_department, $rating, $comment);
         
         if ($stmt->execute()) {
             $success_message = 'Review submitted successfully!';
-            log_activity($conn, $user_name, 'Submit Review', "Rating: $rating stars");
+            log_activity($conn, $user_name, 'Submit Review', "Reviewed: $review_department - Rating: $rating stars");
         } else {
             $error_message = 'Failed to submit review. Please try again.';
         }
@@ -32,21 +35,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_review'])) {
     }
 }
 
-// Fetch reviews for user's department (excluding reviewer names)
-$stmt = $conn->prepare("SELECT id, reviewer_department, rating, comment, created_at FROM reviews WHERE reviewer_department = ? AND visible_to_workers = 'Yes' ORDER BY created_at DESC");
-$stmt->bind_param("s", $user_department);
+// Get filter department
+$filter_dept = $_GET['filter_dept'] ?? '';
+
+// Fetch reviews (all departments or filtered)
+if (!empty($filter_dept)) {
+    $stmt = $conn->prepare("SELECT id, reviewer_department, rating, comment, created_at FROM reviews WHERE reviewer_department = ? AND visible_to_workers = 'Yes' ORDER BY created_at DESC LIMIT 50");
+    $stmt->bind_param("s", $filter_dept);
+} else {
+    $stmt = $conn->prepare("SELECT id, reviewer_department, rating, comment, created_at FROM reviews WHERE visible_to_workers = 'Yes' ORDER BY created_at DESC LIMIT 50");
+}
 $stmt->execute();
 $reviews_result = $stmt->get_result();
 $reviews = $reviews_result->fetch_all(MYSQLI_ASSOC);
 $stmt->close();
 
+// Calculate overall statistics
+$overall_stats = $conn->query("SELECT AVG(rating) as avg_rating, COUNT(*) as total_reviews FROM reviews WHERE visible_to_workers = 'Yes'")->fetch_assoc();
+
 // Calculate department statistics
-$stmt = $conn->prepare("SELECT AVG(rating) as avg_rating, COUNT(*) as total_reviews FROM reviews WHERE reviewer_department = ? AND visible_to_workers = 'Yes'");
-$stmt->bind_param("s", $user_department);
-$stmt->execute();
-$stats_result = $stmt->get_result();
-$stats = $stats_result->fetch_assoc();
-$stmt->close();
+$dept_stats_query = "SELECT reviewer_department, AVG(rating) as avg_rating, COUNT(*) as review_count FROM reviews WHERE visible_to_workers = 'Yes' GROUP BY reviewer_department ORDER BY avg_rating DESC";
+$dept_stats_result = $conn->query($dept_stats_query);
+$dept_stats = [];
+while ($row = $dept_stats_result->fetch_assoc()) {
+    $dept_stats[$row['reviewer_department']] = $row;
+}
 
 $conn->close();
 ?>
@@ -55,7 +68,7 @@ $conn->close();
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Worker Dashboard - <?php echo sanitize_output($user_department); ?></title>
+    <title>Worker Dashboard - Church Workers</title>
     <style>
         * {
             margin: 0;
@@ -123,6 +136,8 @@ $conn->close();
             display: flex;
             align-items: center;
             gap: 10px;
+            text-decoration: none;
+            color: white;
         }
         
         .menu-item:hover, .menu-item.active {
@@ -190,47 +205,6 @@ $conn->close();
             color: white;
             font-size: 20px;
             font-weight: bold;
-        }
-        
-        .department-banner {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 40px;
-            border-radius: 15px;
-            margin-bottom: 30px;
-            text-align: center;
-            position: relative;
-            overflow: hidden;
-        }
-        
-        .department-banner::before {
-            content: '';
-            position: absolute;
-            top: -50%;
-            right: -50%;
-            width: 200%;
-            height: 200%;
-            background: radial-gradient(circle, rgba(255, 255, 255, 0.1) 0%, transparent 70%);
-            animation: pulse 4s ease-in-out infinite;
-        }
-        
-        @keyframes pulse {
-            0%, 100% { transform: scale(1); opacity: 0.5; }
-            50% { transform: scale(1.1); opacity: 0.8; }
-        }
-        
-        .department-banner .icon {
-            font-size: 80px;
-            margin-bottom: 15px;
-            position: relative;
-            z-index: 1;
-        }
-        
-        .department-banner h2 {
-            font-size: 32px;
-            margin-bottom: 10px;
-            position: relative;
-            z-index: 1;
         }
         
         .stats-grid {
@@ -379,6 +353,80 @@ $conn->close();
             box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
         }
         
+        .departments-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .dept-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 25px;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            text-decoration: none;
+        }
+        
+        .dept-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3);
+        }
+        
+        .dept-card .dept-icon {
+            font-size: 40px;
+            margin-bottom: 15px;
+        }
+        
+        .dept-card h3 {
+            font-size: 16px;
+            margin-bottom: 10px;
+            line-height: 1.4;
+        }
+        
+        .dept-card .dept-stats {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+            font-size: 13px;
+        }
+        
+        .dept-card .rating {
+            font-weight: 600;
+        }
+        
+        .filter-bar {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 25px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        .filter-bar select {
+            padding: 10px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            flex: 1;
+            min-width: 200px;
+        }
+        
+        .filter-bar button {
+            padding: 10px 25px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        
         .review-card {
             background: #f9f9f9;
             padding: 20px;
@@ -398,6 +446,9 @@ $conn->close();
             color: #667eea;
             font-weight: 600;
             font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
         
         .review-date {
@@ -443,6 +494,10 @@ $conn->close();
             .stats-grid {
                 grid-template-columns: 1fr;
             }
+            
+            .departments-grid {
+                grid-template-columns: 1fr;
+            }
         }
     </style>
 </head>
@@ -460,12 +515,6 @@ $conn->close();
                 <span class="icon">📊</span>
                 <span>Dashboard</span>
             </div>
-            <a href="department_page.php?dept=<?php echo urlencode($user_department); ?>" style="text-decoration: none; color: white;">
-                <div class="menu-item">
-                    <span class="icon">📁</span>
-                    <span>Department Page</span>
-                </div>
-            </a>
         </div>
         
         <a href="logout.php" class="logout-btn">🚪 Logout</a>
@@ -483,31 +532,56 @@ $conn->close();
             </div>
         </div>
         
-        <div class="department-banner">
-            <div class="icon"><?php echo get_department_icon($user_department); ?></div>
-            <h2><?php echo sanitize_output($user_department); ?></h2>
-        </div>
-        
         <div class="stats-grid">
             <div class="stat-card">
                 <div class="stat-icon blue">⭐</div>
                 <div class="stat-info">
-                    <h3>Average Rating</h3>
-                    <p><?php echo number_format($stats['avg_rating'] ?? 0, 1); ?></p>
+                    <h3>Overall Average Rating</h3>
+                    <p><?php echo number_format($overall_stats['avg_rating'] ?? 0, 1); ?></p>
                 </div>
             </div>
             <div class="stat-card">
                 <div class="stat-icon purple">💬</div>
                 <div class="stat-info">
                     <h3>Total Reviews</h3>
-                    <p><?php echo $stats['total_reviews'] ?? 0; ?></p>
+                    <p><?php echo $overall_stats['total_reviews'] ?? 0; ?></p>
                 </div>
             </div>
         </div>
         
         <div class="section">
             <div class="section-header">
-                <h2>Submit New Review</h2>
+                <h2>Rate Departments</h2>
+            </div>
+            <p style="margin-bottom: 20px; color: #666;">Click on any department below to view its reviews or scroll down to submit a new review.</p>
+            
+            <div class="departments-grid">
+                <?php foreach (get_departments() as $dept): ?>
+                    <a href="department_page.php?dept=<?php echo urlencode($dept); ?>" class="dept-card">
+                        <div class="dept-icon"><?php echo get_department_icon($dept); ?></div>
+                        <h3><?php echo sanitize_output($dept); ?></h3>
+                        <div class="dept-stats">
+                            <span class="rating">
+                                <?php 
+                                $avg = isset($dept_stats[$dept]) ? number_format($dept_stats[$dept]['avg_rating'], 1) : 'N/A';
+                                echo $avg == 'N/A' ? 'No ratings yet' : "⭐ $avg";
+                                ?>
+                            </span>
+                            <span>
+                                <?php 
+                                $count = isset($dept_stats[$dept]) ? $dept_stats[$dept]['review_count'] : 0;
+                                echo "$count review" . ($count != 1 ? 's' : '');
+                                ?>
+                            </span>
+                        </div>
+                    </a>
+                <?php endforeach; ?>
+            </div>
+        </div>
+        
+        <div class="section" id="submit-review">
+            <div class="section-header">
+                <h2>Submit Department Review</h2>
             </div>
             
             <?php if ($success_message): ?>
@@ -518,11 +592,18 @@ $conn->close();
                 <div class="alert alert-error"><?php echo sanitize_output($error_message); ?></div>
             <?php endif; ?>
             
-            <form method="POST" action="">
+            <form method="POST" action="#submit-review">
                 <div class="form-grid">
                     <div class="form-group">
-                        <label>Department</label>
-                        <input type="text" value="<?php echo sanitize_output($user_department); ?>" readonly>
+                        <label>Select Department to Review</label>
+                        <select name="review_department" required>
+                            <option value="">-- Choose a department --</option>
+                            <?php foreach (get_departments() as $dept): ?>
+                                <option value="<?php echo sanitize_output($dept); ?>">
+                                    <?php echo get_department_icon($dept); ?> <?php echo sanitize_output($dept); ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
                     </div>
                     
                     <div class="form-group">
@@ -539,7 +620,7 @@ $conn->close();
                     
                     <div class="form-group">
                         <label>Comment</label>
-                        <textarea name="comment" rows="5" placeholder="Share your feedback about the department..." required></textarea>
+                        <textarea name="comment" rows="5" placeholder="Share your feedback about this department..." required></textarea>
                     </div>
                     
                     <button type="submit" name="submit_review" class="btn btn-primary">Submit Review</button>
@@ -549,14 +630,29 @@ $conn->close();
         
         <div class="section">
             <div class="section-header">
-                <h2>Department Reviews</h2>
+                <h2>Recent Reviews</h2>
             </div>
+            
+            <form method="GET" class="filter-bar">
+                <select name="filter_dept">
+                    <option value="">All Departments</option>
+                    <?php foreach (get_departments() as $dept): ?>
+                        <option value="<?php echo sanitize_output($dept); ?>" <?php echo ($filter_dept === $dept) ? 'selected' : ''; ?>>
+                            <?php echo sanitize_output($dept); ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+                <button type="submit">🔍 Filter</button>
+            </form>
             
             <?php if (count($reviews) > 0): ?>
                 <?php foreach ($reviews as $review): ?>
                     <div class="review-card">
                         <div class="review-header">
-                            <div class="review-department"><?php echo sanitize_output($review['reviewer_department']); ?></div>
+                            <div class="review-department">
+                                <span><?php echo get_department_icon($review['reviewer_department']); ?></span>
+                                <span><?php echo sanitize_output($review['reviewer_department']); ?></span>
+                            </div>
                             <div class="review-date"><?php echo date('M d, Y', strtotime($review['created_at'])); ?></div>
                         </div>
                         <div class="review-stars">
@@ -570,7 +666,7 @@ $conn->close();
                 <div class="empty-state">
                     <div class="icon">📝</div>
                     <h3>No reviews yet</h3>
-                    <p>Be the first to submit a review for your department!</p>
+                    <p>Be the first to submit a review!</p>
                 </div>
             <?php endif; ?>
         </div>
