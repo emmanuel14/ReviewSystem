@@ -6,55 +6,59 @@ $conn = getDBConnection();
 $user_department = $_SESSION['department'];
 $user_name = $_SESSION['user_name'];
 
-// Handle review submission
+// Handle multiple department reviews submission
 $success_message = '';
 $error_message = '';
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_review'])) {
-    $rating = intval($_POST['rating'] ?? 0);
-    $comment = trim($_POST['comment'] ?? '');
-    $review_department = trim($_POST['review_department'] ?? '');
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_all_reviews'])) {
+    $overall_rating = intval($_POST['overall_rating'] ?? 0);
+    $overall_comment = trim($_POST['overall_comment'] ?? '');
     
-    if ($rating < 1 || $rating > 5) {
-        $error_message = 'Please select a valid rating (1-5 stars).';
-    } elseif (empty($comment)) {
-        $error_message = 'Please provide a comment.';
-    } elseif (empty($review_department)) {
-        $error_message = 'Please select a department to review.';
-    } else {
-        $stmt = $conn->prepare("INSERT INTO reviews (reviewer_name, reviewer_department, rating, comment) VALUES (?, ?, ?, ?)");
-        $stmt->bind_param("ssis", $user_name, $review_department, $rating, $comment);
+    $submitted_count = 0;
+    $departments = get_departments();
+    
+    // Submit individual department reviews
+    foreach ($departments as $index => $dept) {
+        $rating = intval($_POST["rating_$index"] ?? 0);
+        $comment = trim($_POST["comment_$index"] ?? '');
         
-        if ($stmt->execute()) {
-            $success_message = 'Thank you for your feedback!';
-            log_activity($conn, $user_name, 'Submit Review', "Reviewed: $review_department - Rating: $rating stars");
-        } else {
-            $error_message = 'Failed to submit review. Please try again.';
+        if ($rating > 0 && !empty($comment)) {
+            $stmt = $conn->prepare("INSERT INTO reviews (reviewer_name, reviewer_department, rating, comment) VALUES (?, ?, ?, ?)");
+            $stmt->bind_param("ssis", $user_name, $dept, $rating, $comment);
+            $stmt->execute();
+            $stmt->close();
+            $submitted_count++;
         }
+    }
+    
+    // Submit overall service review if provided
+    if ($overall_rating > 0 && !empty($overall_comment)) {
+        $overall_dept = "Overall Service";
+        $stmt = $conn->prepare("INSERT INTO reviews (reviewer_name, reviewer_department, rating, comment) VALUES (?, ?, ?, ?)");
+        $stmt->bind_param("ssis", $user_name, $overall_dept, $overall_rating, $overall_comment);
+        $stmt->execute();
         $stmt->close();
+    }
+    
+    if ($submitted_count > 0 || ($overall_rating > 0 && !empty($overall_comment))) {
+        $success_message = 'Thank you for your feedback!';
+        log_activity($conn, $user_name, 'Submit Reviews', "Submitted $submitted_count department reviews");
+        
+        // Redirect to prevent resubmission
+        header("Location: worker_dashboard.php?success=1");
+        exit();
+    } else {
+        $error_message = 'Please rate at least one department.';
     }
 }
 
-// Get filter department
-$filter_dept = $_GET['filter_dept'] ?? '';
-
-// Fetch reviews (all departments or filtered)
-if (!empty($filter_dept)) {
-    $stmt = $conn->prepare("SELECT id, reviewer_department, rating, comment, created_at FROM reviews WHERE reviewer_department = ? AND visible_to_workers = 'Yes' ORDER BY created_at DESC LIMIT 50");
-    $stmt->bind_param("s", $filter_dept);
-} else {
-    $stmt = $conn->prepare("SELECT id, reviewer_department, rating, comment, created_at FROM reviews WHERE visible_to_workers = 'Yes' ORDER BY created_at DESC LIMIT 20");
+// Check for success parameter
+if (isset($_GET['success'])) {
+    $success_message = 'Thank you for your feedback!';
 }
-$stmt->execute();
-$reviews_result = $stmt->get_result();
-$reviews = $reviews_result->fetch_all(MYSQLI_ASSOC);
-$stmt->close();
-
-// Calculate overall statistics
-$overall_stats = $conn->query("SELECT AVG(rating) as avg_rating, COUNT(*) as total_reviews FROM reviews WHERE visible_to_workers = 'Yes'")->fetch_assoc();
 
 // Calculate department statistics
-$dept_stats_query = "SELECT reviewer_department, AVG(rating) as avg_rating, COUNT(*) as review_count FROM reviews WHERE visible_to_workers = 'Yes' GROUP BY reviewer_department ORDER BY avg_rating DESC";
+$dept_stats_query = "SELECT reviewer_department, AVG(rating) as avg_rating, COUNT(*) as review_count FROM reviews WHERE visible_to_workers = 'Yes' GROUP BY reviewer_department";
 $dept_stats_result = $conn->query($dept_stats_query);
 $dept_stats = [];
 while ($row = $dept_stats_result->fetch_assoc()) {
@@ -62,6 +66,8 @@ while ($row = $dept_stats_result->fetch_assoc()) {
 }
 
 $conn->close();
+
+$color_palette = ['#8B5CF6', '#EC4899', '#F59E0B', '#10B981', '#06B6D4', '#3B82F6', '#6366F1'];
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -78,14 +84,13 @@ $conn->close();
         
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(to bottom right, #f3e7ff, #e0e7ff);
             min-height: 100vh;
         }
         
         .navbar {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(10px);
-            padding: 20px 0;
+            background: linear-gradient(to right, #7c3aed, #2563eb, #4f46e5);
+            color: white;
             box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
             position: sticky;
             top: 0;
@@ -99,27 +104,27 @@ $conn->close();
             display: flex;
             justify-content: space-between;
             align-items: center;
+            height: 64px;
         }
         
         .navbar-brand {
             display: flex;
             align-items: center;
-            gap: 15px;
+            gap: 12px;
         }
         
         .navbar-icon {
-            font-size: 40px;
+            font-size: 32px;
         }
         
         .navbar-text h1 {
-            font-size: 24px;
-            color: #333;
+            font-size: 18px;
             font-weight: 700;
         }
         
         .navbar-text p {
             font-size: 12px;
-            color: #667eea;
+            color: rgba(233, 213, 255, 0.9);
         }
         
         .navbar-user {
@@ -128,257 +133,53 @@ $conn->close();
             gap: 15px;
         }
         
-        .user-avatar {
-            width: 45px;
-            height: 45px;
-            border-radius: 50%;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            display: flex;
-            align-items: center;
-            justify-content: center;
+        .logout-btn {
+            padding: 8px 20px;
+            background: rgba(255, 255, 255, 0.2);
             color: white;
-            font-weight: 700;
-            font-size: 18px;
-        }
-        
-        .user-info {
-            text-align: right;
-        }
-        
-        .user-name {
+            border: none;
+            border-radius: 8px;
             font-weight: 600;
-            color: #333;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-decoration: none;
+            display: inline-block;
             font-size: 14px;
         }
         
-        .user-dept {
-            font-size: 11px;
-            color: #666;
-        }
-        
-        .logout-btn {
-            padding: 10px 20px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            border-radius: 10px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s;
-            text-decoration: none;
-            display: inline-block;
-        }
-        
         .logout-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+            background: rgba(255, 255, 255, 0.3);
         }
         
         .container {
             max-width: 1400px;
             margin: 0 auto;
-            padding: 40px 20px;
+            padding: 32px 16px;
         }
         
         .page-header {
             text-align: center;
-            margin-bottom: 40px;
-            color: white;
+            margin-bottom: 32px;
         }
         
         .page-header h2 {
-            font-size: 48px;
+            font-size: 36px;
             font-weight: 700;
-            margin-bottom: 10px;
-            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
+            color: #1f2937;
+            margin-bottom: 8px;
         }
         
         .page-header p {
-            font-size: 18px;
-            opacity: 0.95;
-        }
-        
-        .departments-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-            gap: 25px;
-            margin-bottom: 50px;
-        }
-        
-        .dept-card {
-            background: white;
-            border-radius: 20px;
-            padding: 25px;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
-            transition: all 0.3s;
-            border: 2px solid transparent;
-        }
-        
-        .dept-card:hover {
-            transform: translateY(-8px);
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
-            border-color: #667eea;
-        }
-        
-        .dept-header {
-            display: flex;
-            align-items: center;
-            gap: 15px;
-            margin-bottom: 20px;
-        }
-        
-        .dept-icon {
-            width: 60px;
-            height: 60px;
-            border-radius: 15px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 32px;
-            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
-        }
-        
-        .dept-info {
-            flex: 1;
-        }
-        
-        .dept-name {
-            font-weight: 700;
-            color: #333;
             font-size: 16px;
-            margin-bottom: 3px;
-        }
-        
-        .dept-subtitle {
-            font-size: 11px;
-            color: #666;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        
-        .dept-stats {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 12px;
-            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-            border-radius: 10px;
-            margin-bottom: 15px;
-            font-size: 13px;
-        }
-        
-        .dept-rating {
-            font-weight: 700;
-            color: #667eea;
-        }
-        
-        .star-rating {
-            display: flex;
-            gap: 8px;
-            font-size: 24px;
-            margin-bottom: 15px;
-        }
-        
-        .star {
-            cursor: pointer;
-            color: #ddd;
-            transition: all 0.2s;
-        }
-        
-        .star.active,
-        .star:hover {
-            color: #fbbf24;
-            transform: scale(1.2);
-        }
-        
-        .comment-box {
-            width: 100%;
-            padding: 12px;
-            border: 2px solid #e0e0e0;
-            border-radius: 10px;
-            font-size: 13px;
-            font-family: inherit;
-            resize: none;
-            transition: border-color 0.3s;
-        }
-        
-        .comment-box:focus {
-            outline: none;
-            border-color: #667eea;
-        }
-        
-        .overall-section {
-            max-width: 800px;
-            margin: 0 auto 50px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border-radius: 25px;
-            padding: 40px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-            color: white;
-        }
-        
-        .overall-section h3 {
-            font-size: 32px;
-            text-align: center;
-            margin-bottom: 30px;
-            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
-        }
-        
-        .overall-select {
-            width: 100%;
-            padding: 15px;
-            border: 2px solid white;
-            border-radius: 12px;
-            font-size: 16px;
-            margin-bottom: 20px;
-            font-weight: 600;
-        }
-        
-        .overall-stars {
-            display: flex;
-            justify-content: center;
-            gap: 15px;
-            margin-bottom: 25px;
-        }
-        
-        .overall-stars .star {
-            font-size: 48px;
-        }
-        
-        .overall-comment {
-            width: 100%;
-            padding: 15px;
-            border: 2px solid white;
-            border-radius: 12px;
-            font-size: 15px;
-            font-family: inherit;
-            resize: none;
-            margin-bottom: 25px;
-        }
-        
-        .submit-btn {
-            width: 100%;
-            padding: 18px;
-            background: white;
-            color: #667eea;
-            border: none;
-            border-radius: 12px;
-            font-size: 18px;
-            font-weight: 700;
-            cursor: pointer;
-            transition: all 0.3s;
-        }
-        
-        .submit-btn:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            color: #6b7280;
         }
         
         .alert {
-            padding: 20px;
-            border-radius: 15px;
-            margin-bottom: 30px;
-            font-size: 16px;
+            max-width: 800px;
+            margin: 0 auto 24px;
+            padding: 16px 24px;
+            border-radius: 12px;
+            font-size: 14px;
             font-weight: 600;
             text-align: center;
             animation: slideDown 0.3s ease-out;
@@ -396,103 +197,176 @@ $conn->close();
         }
         
         .alert-success {
-            background: white;
-            color: #10b981;
-            border: 3px solid #10b981;
+            background: #d1fae5;
+            color: #065f46;
+            border-left: 4px solid #10b981;
         }
         
         .alert-error {
-            background: white;
-            color: #ef4444;
-            border: 3px solid #ef4444;
+            background: #fee2e2;
+            color: #991b1b;
+            border-left: 4px solid #ef4444;
         }
         
-        .reviews-section {
-            background: white;
-            border-radius: 25px;
-            padding: 40px;
-            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+        .departments-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+            gap: 24px;
+            margin-bottom: 48px;
         }
         
-        .reviews-header {
+        .dept-card {
+            background: white;
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+            transition: all 0.3s;
+            border: 2px solid transparent;
+        }
+        
+        .dept-card:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 12px 24px rgba(0, 0, 0, 0.15);
+            border-color: #a78bfa;
+        }
+        
+        .dept-header {
             display: flex;
-            justify-content: space-between;
             align-items: center;
-            margin-bottom: 30px;
-            flex-wrap: wrap;
-            gap: 20px;
+            gap: 12px;
+            margin-bottom: 16px;
         }
         
-        .reviews-header h3 {
-            font-size: 28px;
-            color: #333;
+        .dept-icon {
+            width: 64px;
+            height: 64px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
         }
         
-        .filter-select {
-            padding: 12px 20px;
-            border: 2px solid #e0e0e0;
+        .dept-info {
+            flex: 1;
+        }
+        
+        .dept-name {
+            font-weight: 700;
+            color: #1f2937;
+            font-size: 15px;
+            margin-bottom: 2px;
+        }
+        
+        .dept-subtitle {
+            font-size: 10px;
+            color: #6b7280;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .star-rating {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+        
+        .star {
+            cursor: pointer;
+            color: #d1d5db;
+            font-size: 20px;
+            transition: all 0.2s;
+        }
+        
+        .star.active {
+            color: #fbbf24;
+        }
+        
+        .star:hover {
+            transform: scale(1.1);
+        }
+        
+        .comment-box {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 13px;
+            font-family: inherit;
+            resize: none;
+            transition: border-color 0.3s;
+        }
+        
+        .comment-box:focus {
+            outline: none;
+            border-color: #a78bfa;
+        }
+        
+        .overall-section {
+            max-width: 672px;
+            margin: 0 auto;
+            background: linear-gradient(to bottom right, #7c3aed, #2563eb);
+            border-radius: 16px;
+            padding: 32px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+            color: white;
+        }
+        
+        .overall-section h3 {
+            font-size: 24px;
+            font-weight: 700;
+            text-align: center;
+            margin-bottom: 24px;
+        }
+        
+        .overall-stars {
+            display: flex;
+            justify-content: center;
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+        
+        .overall-stars .star {
+            font-size: 40px;
+            color: #d1d5db;
+        }
+        
+        .overall-stars .star.active {
+            color: #fbbf24;
+        }
+        
+        .overall-comment {
+            width: 100%;
+            padding: 12px 16px;
             border-radius: 12px;
             font-size: 14px;
-            font-weight: 600;
+            font-family: inherit;
+            resize: none;
+            border: 2px solid white;
+            margin-bottom: 24px;
         }
         
-        .review-card {
-            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
-            padding: 25px;
-            border-radius: 15px;
-            margin-bottom: 20px;
-            border-left: 5px solid #667eea;
-            transition: all 0.3s;
+        .overall-comment:focus {
+            outline: none;
         }
         
-        .review-card:hover {
-            transform: translateX(5px);
-            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.1);
-        }
-        
-        .review-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 12px;
-        }
-        
-        .review-dept {
-            display: flex;
-            align-items: center;
-            gap: 10px;
+        .submit-btn {
+            width: 100%;
+            padding: 16px;
+            background: white;
+            color: #7c3aed;
+            border: none;
+            border-radius: 12px;
+            font-size: 18px;
             font-weight: 700;
-            color: #667eea;
-            font-size: 15px;
+            cursor: pointer;
+            transition: all 0.2s;
         }
         
-        .review-date {
-            color: #999;
-            font-size: 13px;
-        }
-        
-        .review-stars {
-            color: #fbbf24;
-            font-size: 20px;
-            margin-bottom: 12px;
-        }
-        
-        .review-comment {
-            color: #555;
-            line-height: 1.7;
-            font-size: 14px;
-        }
-        
-        .empty-state {
-            text-align: center;
-            padding: 80px 20px;
-            color: #999;
-        }
-        
-        .empty-icon {
-            font-size: 100px;
-            margin-bottom: 20px;
-            opacity: 0.3;
+        .submit-btn:hover {
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+            transform: translateY(-2px);
         }
         
         @media (max-width: 768px) {
@@ -502,11 +376,13 @@ $conn->close();
             
             .navbar-container {
                 flex-direction: column;
-                gap: 15px;
+                height: auto;
+                padding: 16px 20px;
+                gap: 12px;
             }
             
             .page-header h2 {
-                font-size: 32px;
+                font-size: 28px;
             }
         }
     </style>
@@ -517,17 +393,12 @@ $conn->close();
             <div class="navbar-brand">
                 <div class="navbar-icon">⛪</div>
                 <div class="navbar-text">
-                    <h1>Church Rating System</h1>
-                    <p>Rate Your Service Experience</p>
+                    <h1>Church Rating</h1>
+                    <p>Welcome, <?php echo sanitize_output($user_name); ?></p>
                 </div>
             </div>
             
             <div class="navbar-user">
-                <div class="user-info">
-                    <div class="user-name"><?php echo sanitize_output($user_name); ?></div>
-                    <div class="user-dept"><?php echo sanitize_output($user_department); ?></div>
-                </div>
-                <div class="user-avatar"><?php echo strtoupper(substr($user_name, 0, 1)); ?></div>
                 <a href="logout.php" class="logout-btn">Logout</a>
             </div>
         </div>
@@ -548,125 +419,128 @@ $conn->close();
         <?php endif; ?>
         
         <form method="POST" action="" id="ratingForm">
-            <div class="departments-grid" id="departmentsGrid">
-                <?php foreach (get_departments() as $dept): ?>
+            <div class="departments-grid">
+                <?php 
+                $departments = get_departments();
+                foreach ($departments as $index => $dept): 
+                    $color = $color_palette[$index % count($color_palette)];
+                ?>
                     <div class="dept-card">
                         <div class="dept-header">
-                            <div class="dept-icon" style="background: <?php 
-                                $colors = ['#8B5CF6', '#EC4899', '#F59E0B', '#10B981', '#06B6D4', '#3B82F6'];
-                                echo $colors[array_rand($colors)] . '20';
-                            ?>;">
+                            <div class="dept-icon" style="background-color: <?php echo $color; ?>20;">
                                 <?php echo get_department_icon($dept); ?>
                             </div>
                             <div class="dept-info">
                                 <div class="dept-name"><?php echo sanitize_output($dept); ?></div>
+                                <div class="dept-subtitle">
+                                    <?php 
+                                    if (isset($dept_stats[$dept])) {
+                                        echo number_format($dept_stats[$dept]['avg_rating'], 1) . " ⭐ • " . 
+                                             $dept_stats[$dept]['review_count'] . " reviews";
+                                    } else {
+                                        echo "No ratings yet";
+                                    }
+                                    ?>
+                                </div>
                             </div>
                         </div>
                         
-                        <div class="dept-stats">
-                            <span class="dept-rating">
-                                <?php 
-                                $avg = isset($dept_stats[$dept]) ? number_format($dept_stats[$dept]['avg_rating'], 1) : 'N/A';
-                                echo $avg == 'N/A' ? 'No ratings yet' : "⭐ $avg";
-                                ?>
-                            </span>
-                            <span>
-                                <?php 
-                                $count = isset($dept_stats[$dept]) ? $dept_stats[$dept]['review_count'] : 0;
-                                echo "$count review" . ($count != 1 ? 's' : '');
-                                ?>
-                            </span>
+                        <div class="star-rating" data-dept="<?php echo $index; ?>">
+                            <span class="star" data-rating="1">★</span>
+                            <span class="star" data-rating="2">★</span>
+                            <span class="star" data-rating="3">★</span>
+                            <span class="star" data-rating="4">★</span>
+                            <span class="star" data-rating="5">★</span>
                         </div>
+                        <input type="hidden" name="rating_<?php echo $index; ?>" id="rating_<?php echo $index; ?>" value="0">
+                        
+                        <textarea 
+                            name="comment_<?php echo $index; ?>" 
+                            class="comment-box" 
+                            rows="2" 
+                            placeholder="Add your comments (optional)"
+                        ></textarea>
                     </div>
                 <?php endforeach; ?>
             </div>
             
             <div class="overall-section">
-                <h3>Submit Your Review</h3>
+                <h3>Overall Service Rating</h3>
                 
-                <select name="review_department" class="overall-select" required>
-                    <option value="">-- Select Department to Review --</option>
-                    <?php foreach (get_departments() as $dept): ?>
-                        <option value="<?php echo sanitize_output($dept); ?>">
-                            <?php echo get_department_icon($dept); ?> <?php echo sanitize_output($dept); ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-                
-                <div class="overall-stars">
+                <div class="overall-stars" id="overallStars">
                     <span class="star" data-rating="1">★</span>
                     <span class="star" data-rating="2">★</span>
                     <span class="star" data-rating="3">★</span>
                     <span class="star" data-rating="4">★</span>
                     <span class="star" data-rating="5">★</span>
                 </div>
-                <input type="hidden" name="rating" id="ratingInput" value="0">
+                <input type="hidden" name="overall_rating" id="overall_rating" value="0">
                 
                 <textarea 
-                    name="comment" 
+                    name="overall_comment" 
                     class="overall-comment" 
-                    rows="5" 
-                    placeholder="Share your overall experience..." 
-                    required
+                    rows="4" 
+                    placeholder="Share your overall experience..."
                 ></textarea>
                 
-                <button type="submit" name="submit_review" class="submit-btn">Submit Rating</button>
+                <button type="submit" name="submit_all_reviews" class="submit-btn">
+                    Submit Ratings
+                </button>
             </div>
         </form>
-        
-        <div class="reviews-section">
-            <div class="reviews-header">
-                <h3>Recent Reviews</h3>
-                <form method="GET">
-                    <select name="filter_dept" class="filter-select" onchange="this.form.submit()">
-                        <option value="">All Departments</option>
-                        <?php foreach (get_departments() as $dept): ?>
-                            <option value="<?php echo sanitize_output($dept); ?>" <?php echo ($filter_dept === $dept) ? 'selected' : ''; ?>>
-                                <?php echo sanitize_output($dept); ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                </form>
-            </div>
-            
-            <?php if (count($reviews) > 0): ?>
-                <?php foreach ($reviews as $review): ?>
-                    <div class="review-card">
-                        <div class="review-header">
-                            <div class="review-dept">
-                                <span><?php echo get_department_icon($review['reviewer_department']); ?></span>
-                                <span><?php echo sanitize_output($review['reviewer_department']); ?></span>
-                            </div>
-                            <div class="review-date"><?php echo date('M d, Y', strtotime($review['created_at'])); ?></div>
-                        </div>
-                        <div class="review-stars">
-                            <?php for ($i = 0; $i < $review['rating']; $i++): ?>★<?php endfor; ?>
-                            <?php for ($i = $review['rating']; $i < 5; $i++): ?>☆<?php endfor; ?>
-                        </div>
-                        <div class="review-comment"><?php echo nl2br(sanitize_output($review['comment'])); ?></div>
-                    </div>
-                <?php endforeach; ?>
-            <?php else: ?>
-                <div class="empty-state">
-                    <div class="empty-icon">📝</div>
-                    <h3>No reviews yet</h3>
-                    <p>Be the first to submit a review!</p>
-                </div>
-            <?php endif; ?>
-        </div>
     </div>
     
     <script>
-        // Star rating functionality
-        const stars = document.querySelectorAll('.overall-stars .star');
-        const ratingInput = document.getElementById('ratingInput');
+        // Individual department star ratings
+        document.querySelectorAll('.dept-card .star-rating').forEach(ratingContainer => {
+            const stars = ratingContainer.querySelectorAll('.star');
+            const deptIndex = ratingContainer.getAttribute('data-dept');
+            const hiddenInput = document.getElementById('rating_' + deptIndex);
+            
+            stars.forEach(star => {
+                star.addEventListener('click', function() {
+                    const rating = this.getAttribute('data-rating');
+                    hiddenInput.value = rating;
+                    
+                    stars.forEach(s => {
+                        if (s.getAttribute('data-rating') <= rating) {
+                            s.classList.add('active');
+                        } else {
+                            s.classList.remove('active');
+                        }
+                    });
+                });
+                
+                star.addEventListener('mouseenter', function() {
+                    const rating = this.getAttribute('data-rating');
+                    stars.forEach(s => {
+                        if (s.getAttribute('data-rating') <= rating) {
+                            s.style.color = '#fbbf24';
+                        }
+                    });
+                });
+            });
+            
+            ratingContainer.addEventListener('mouseleave', function() {
+                const currentRating = hiddenInput.value;
+                stars.forEach(s => {
+                    if (s.getAttribute('data-rating') > currentRating) {
+                        s.style.color = '#d1d5db';
+                    }
+                });
+            });
+        });
         
-        stars.forEach(star => {
+        // Overall service star rating
+        const overallStars = document.querySelectorAll('#overallStars .star');
+        const overallInput = document.getElementById('overall_rating');
+        
+        overallStars.forEach(star => {
             star.addEventListener('click', function() {
                 const rating = this.getAttribute('data-rating');
-                ratingInput.value = rating;
+                overallInput.value = rating;
                 
-                stars.forEach(s => {
+                overallStars.forEach(s => {
                     if (s.getAttribute('data-rating') <= rating) {
                         s.classList.add('active');
                     } else {
@@ -677,34 +551,21 @@ $conn->close();
             
             star.addEventListener('mouseenter', function() {
                 const rating = this.getAttribute('data-rating');
-                stars.forEach(s => {
+                overallStars.forEach(s => {
                     if (s.getAttribute('data-rating') <= rating) {
                         s.style.color = '#fbbf24';
-                        s.style.transform = 'scale(1.2)';
                     }
                 });
             });
         });
         
-        document.querySelector('.overall-stars').addEventListener('mouseleave', function() {
-            const currentRating = ratingInput.value;
-            stars.forEach(s => {
-                if (s.getAttribute('data-rating') <= currentRating) {
-                    s.style.color = '#fbbf24';
-                } else {
-                    s.style.color = '#ddd';
-                    s.style.transform = 'scale(1)';
+        document.getElementById('overallStars').addEventListener('mouseleave', function() {
+            const currentRating = overallInput.value;
+            overallStars.forEach(s => {
+                if (s.getAttribute('data-rating') > currentRating) {
+                    s.style.color = '#d1d5db';
                 }
             });
-        });
-        
-        // Form validation
-        document.getElementById('ratingForm').addEventListener('submit', function(e) {
-            const rating = document.getElementById('ratingInput').value;
-            if (rating == 0) {
-                e.preventDefault();
-                alert('Please select a rating (1-5 stars)');
-            }
         });
     </script>
 </body>
