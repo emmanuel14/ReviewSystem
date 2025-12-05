@@ -342,7 +342,7 @@ $dept_desc = $dept_descriptions[$dept_name] ?? '';
     <div class="container">
         <div class="summary-section">
             <div class="summary-card">
-                <h3>Average Rating</h3>
+                <h3>Average Rating.</h3>
                 <div class="value"><?php echo number_format($summary['avg_rating'], 1); ?></div>
                 <div class="stars">
                     <?php 
