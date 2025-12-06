@@ -4,81 +4,14 @@ require_admin();
 
 $conn = getDBConnection();
 
-// Handle delete review
-if (isset($_GET['delete_review'])) {
-    $review_id = intval($_GET['delete_review']);
-    $stmt = $conn->prepare("DELETE FROM reviews WHERE id = ?");
-    $stmt->bind_param("i", $review_id);
-    $stmt->execute();
-    $stmt->close();
-    
-    log_activity($conn, $_SESSION['user_name'], 'Delete Review', "Review ID: $review_id");
-    header("Location: admin_dashboard.php?success=Review deleted successfully");
-    exit();
-}
+// Get statistics
+$total_reviews = $conn->query("SELECT COUNT(*) as count FROM reviews")->fetch_assoc()['count'];
+$avg_rating = $conn->query("SELECT AVG(rating) as avg FROM reviews")->fetch_assoc()['avg'];
+$pending_actions = $conn->query("SELECT COUNT(*) as count FROM reviews WHERE visible_to_workers = 'No'")->fetch_assoc()['count'];
+$new_today = $conn->query("SELECT COUNT(*) as count FROM reviews WHERE DATE(created_at) = CURDATE()")->fetch_assoc()['count'];
 
-// Handle search and filter
-$search_dept = $_GET['search_dept'] ?? '';
-$search_query = $_GET['search_query'] ?? '';
-
-// Fetch all reviews with filters
-$sql = "SELECT r.*, w.full_name as reviewer_full_name 
-        FROM reviews r 
-        LEFT JOIN workers w ON r.reviewer_name = w.full_name 
-        WHERE 1=1";
-
-$params = [];
-$types = '';
-
-if (!empty($search_dept)) {
-    $sql .= " AND r.reviewer_department = ?";
-    $params[] = $search_dept;
-    $types .= 's';
-}
-
-if (!empty($search_query)) {
-    $sql .= " AND (r.comment LIKE ? OR r.reviewer_name LIKE ?)";
-    $search_param = "%$search_query%";
-    $params[] = $search_param;
-    $params[] = $search_param;
-    $types .= 'ss';
-}
-
-$sql .= " ORDER BY r.created_at DESC";
-
-$stmt = $conn->prepare($sql);
-if (!empty($params)) {
-    $stmt->bind_param($types, ...$params);
-}
-$stmt->execute();
-$reviews_result = $stmt->get_result();
-$reviews = $reviews_result->fetch_all(MYSQLI_ASSOC);
-$stmt->close();
-
-// Get overall statistics
-$stats_query = "SELECT 
-    COUNT(*) as total_reviews,
-    AVG(rating) as avg_rating,
-    COUNT(DISTINCT reviewer_department) as total_departments
-    FROM reviews";
-$stats_result = $conn->query($stats_query);
-$overall_stats = $stats_result->fetch_assoc();
-
-// Get department statistics
-$dept_stats_query = "SELECT 
-    reviewer_department,
-    COUNT(*) as review_count,
-    AVG(rating) as avg_rating
-    FROM reviews
-    GROUP BY reviewer_department
-    ORDER BY avg_rating DESC";
-$dept_stats_result = $conn->query($dept_stats_query);
-$dept_stats = $dept_stats_result->fetch_all(MYSQLI_ASSOC);
-
-// Get recent activity logs
-$logs_query = "SELECT * FROM activity_logs ORDER BY created_at DESC LIMIT 10";
-$logs_result = $conn->query($logs_query);
-$activity_logs = $logs_result->fetch_all(MYSQLI_ASSOC);
+// Get recent reviews
+$recent_reviews = $conn->query("SELECT * FROM reviews ORDER BY created_at DESC LIMIT 7")->fetch_all(MYSQLI_ASSOC);
 
 $conn->close();
 ?>
@@ -96,270 +29,379 @@ $conn->close();
         }
         
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
             background: #f5f7fa;
             display: flex;
-            min-height: 100vh;
+            height: 100vh;
+            overflow: hidden;
         }
         
+        /* Sidebar */
         .sidebar {
             width: 280px;
-            background: linear-gradient(180deg, #1e3c72 0%, #2a5298 100%);
+            background: #2c3e50;
             color: white;
-            padding: 30px 20px;
-            position: fixed;
-            height: 100vh;
             overflow-y: auto;
+            display: flex;
+            flex-direction: column;
         }
         
         .sidebar-header {
-            text-align: center;
-            margin-bottom: 40px;
-            padding-bottom: 20px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
-        }
-        
-        .sidebar-header .icon {
-            font-size: 60px;
-            margin-bottom: 15px;
-        }
-        
-        .sidebar-header h2 {
-            font-size: 18px;
-            margin-bottom: 5px;
-        }
-        
-        .sidebar-header .badge {
-            display: inline-block;
-            padding: 4px 12px;
-            background: #28a745;
-            border-radius: 12px;
-            font-size: 12px;
-            margin-top: 8px;
-        }
-        
-        .menu-section {
-            margin-bottom: 30px;
-        }
-        
-        .menu-section h3 {
-            font-size: 12px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            margin-bottom: 15px;
-            opacity: 0.7;
-        }
-        
-        .menu-item {
-            padding: 12px 15px;
-            margin-bottom: 8px;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: background 0.2s;
+            padding: 24px 20px;
+            background: #34495e;
             display: flex;
             align-items: center;
-            gap: 10px;
-            text-decoration: none;
-            color: white;
+            gap: 12px;
         }
         
-        .menu-item:hover, .menu-item.active {
-            background: rgba(255, 255, 255, 0.2);
-        }
-        
-        .menu-item .icon {
+        .sidebar-icon {
+            width: 40px;
+            height: 40px;
+            background: #3b5998;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             font-size: 20px;
         }
         
-        .logout-btn {
-            margin-top: 30px;
-            padding: 12px;
-            background: rgba(255, 255, 255, 0.1);
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            color: white;
-            border-radius: 8px;
+        .sidebar-title h3 {
+            font-size: 16px;
+            font-weight: 600;
+        }
+        
+        .sidebar-title p {
+            font-size: 12px;
+            opacity: 0.7;
+        }
+        
+        .sidebar-section {
+            padding: 12px 0;
+        }
+        
+        .sidebar-label {
+            padding: 12px 20px;
+            font-size: 11px;
+            text-transform: uppercase;
+            opacity: 0.5;
+            letter-spacing: 1px;
+            font-weight: 600;
+        }
+        
+        .sidebar-item {
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
             cursor: pointer;
-            text-align: center;
-            text-decoration: none;
-            display: block;
             transition: background 0.2s;
+            color: white;
+            text-decoration: none;
+            font-size: 14px;
         }
         
-        .logout-btn:hover {
-            background: rgba(255, 255, 255, 0.2);
+        .sidebar-item:hover {
+            background: rgba(255, 255, 255, 0.1);
         }
         
+        .sidebar-item.active {
+            background: rgba(52, 152, 219, 0.2);
+            border-left: 3px solid #3498db;
+        }
+        
+        .sidebar-item-icon {
+            width: 20px;
+            font-size: 16px;
+        }
+        
+        /* Main Content */
         .main-content {
             flex: 1;
-            margin-left: 280px;
-            padding: 30px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
         }
         
+        /* Top Bar */
         .top-bar {
             background: white;
-            padding: 20px 30px;
-            border-radius: 15px;
-            margin-bottom: 30px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+            padding: 16px 32px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-        }
-        
-        .top-bar h1 {
-            color: #333;
-            font-size: 28px;
+            border-bottom: 1px solid #e1e8ed;
         }
         
         .user-info {
             display: flex;
             align-items: center;
-            gap: 15px;
+            gap: 12px;
         }
         
         .user-avatar {
-            width: 45px;
-            height: 45px;
+            width: 40px;
+            height: 40px;
+            background: #3498db;
             border-radius: 50%;
-            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
             display: flex;
             align-items: center;
             justify-content: center;
             color: white;
-            font-size: 20px;
-            font-weight: bold;
+            font-weight: 700;
+            font-size: 16px;
         }
         
+        .user-details h4 {
+            font-size: 14px;
+            font-weight: 600;
+            color: #2c3e50;
+        }
+        
+        .user-details p {
+            font-size: 12px;
+            color: #7f8c8d;
+        }
+        
+        .logout-btn {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            background: white;
+            border: 1px solid #e1e8ed;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            color: #2c3e50;
+            text-decoration: none;
+            transition: all 0.2s;
+        }
+        
+        .logout-btn:hover {
+            background: #f8f9fa;
+            border-color: #cbd5e0;
+        }
+        
+        /* Content Area */
+        .content-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0;
+        }
+        
+        /* Hero Section */
+        .hero-section {
+            background: linear-gradient(135deg, #2c5aa0 0%, #1e3a5f 100%);
+            padding: 48px 32px;
+            color: white;
+        }
+        
+        .hero-content {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+        
+        .hero-icon {
+            font-size: 48px;
+        }
+        
+        .hero-text h1 {
+            font-size: 36px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+        
+        .hero-text p {
+            font-size: 16px;
+            opacity: 0.9;
+        }
+        
+        /* Stats Grid */
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            grid-template-columns: repeat(4, 1fr);
             gap: 20px;
-            margin-bottom: 30px;
+            padding: 32px;
         }
         
         .stat-card {
             background: white;
-            padding: 25px;
-            border-radius: 15px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+            padding: 24px;
+            border-radius: 12px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
             display: flex;
-            align-items: center;
-            gap: 20px;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+        
+        .stat-content h3 {
+            font-size: 13px;
+            color: #7f8c8d;
+            font-weight: 500;
+            margin-bottom: 8px;
+        }
+        
+        .stat-content .value {
+            font-size: 32px;
+            font-weight: 700;
+            color: #2c3e50;
         }
         
         .stat-icon {
-            width: 60px;
-            height: 60px;
-            border-radius: 12px;
+            width: 48px;
+            height: 48px;
+            border-radius: 8px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 30px;
+            font-size: 24px;
         }
         
-        .stat-icon.blue { background: #e3f2fd; }
-        .stat-icon.green { background: #e8f5e9; }
-        .stat-icon.purple { background: #f3e5f5; }
-        
-        .stat-info h3 {
-            color: #666;
-            font-size: 14px;
-            margin-bottom: 5px;
-            font-weight: 500;
+        .stat-icon.blue {
+            background: #e3f2fd;
         }
         
-        .stat-info p {
-            color: #333;
-            font-size: 28px;
-            font-weight: 700;
+        .stat-icon.yellow {
+            background: #fff9e6;
         }
         
-        .section {
-            background: white;
-            padding: 30px;
-            border-radius: 15px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-            margin-bottom: 30px;
+        .stat-icon.purple {
+            background: #f3e5f5;
+        }
+        
+        .stat-icon.green {
+            background: #e8f5e9;
+        }
+        
+        /* Recent Reviews Section */
+        .reviews-section {
+            padding: 0 32px 32px;
         }
         
         .section-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 25px;
+            margin-bottom: 20px;
         }
         
         .section-header h2 {
-            color: #333;
             font-size: 22px;
-        }
-        
-        .alert {
-            padding: 15px 20px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-            font-size: 14px;
-        }
-        
-        .alert-success {
-            background: #d4edda;
-            color: #155724;
-            border-left: 4px solid #28a745;
-        }
-        
-        .filter-bar {
-            display: flex;
-            gap: 15px;
-            margin-bottom: 25px;
-            flex-wrap: wrap;
-        }
-        
-        .filter-bar select, .filter-bar input {
-            padding: 10px 15px;
-            border: 2px solid #e0e0e0;
-            border-radius: 8px;
-            font-size: 14px;
-            flex: 1;
-            min-width: 200px;
-        }
-        
-        .filter-bar button {
-            padding: 10px 25px;
-            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
             font-weight: 600;
+            color: #2c3e50;
         }
         
-        .table-container {
-            overflow-x: auto;
+        .view-all {
+            color: #3498db;
+            font-size: 14px;
+            font-weight: 500;
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 4px;
         }
         
-        table {
+        .view-all:hover {
+            text-decoration: underline;
+        }
+        
+        .reviews-container {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+        
+        .reviews-toolbar {
+            padding: 20px 24px;
+            border-bottom: 1px solid #e1e8ed;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 20px;
+        }
+        
+        .search-box {
+            flex: 1;
+            max-width: 400px;
+            position: relative;
+        }
+        
+        .search-box input {
+            width: 100%;
+            padding: 10px 16px 10px 40px;
+            border: 1px solid #e1e8ed;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+        
+        .search-box::before {
+            content: '🔍';
+            position: absolute;
+            left: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 16px;
+        }
+        
+        .filter-group {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+        
+        .filter-select {
+            padding: 10px 16px;
+            border: 1px solid #e1e8ed;
+            border-radius: 8px;
+            font-size: 14px;
+            background: white;
+            cursor: pointer;
+        }
+        
+        .reviews-table {
             width: 100%;
             border-collapse: collapse;
         }
         
-        th {
+        .reviews-table thead {
             background: #f8f9fa;
-            padding: 15px;
+            border-bottom: 1px solid #e1e8ed;
+        }
+        
+        .reviews-table th {
+            padding: 12px 24px;
             text-align: left;
+            font-size: 12px;
             font-weight: 600;
-            color: #333;
-            font-size: 14px;
-            border-bottom: 2px solid #e0e0e0;
+            color: #7f8c8d;
+            text-transform: uppercase;
         }
         
-        td {
-            padding: 15px;
-            border-bottom: 1px solid #f0f0f0;
+        .reviews-table td {
+            padding: 16px 24px;
+            border-bottom: 1px solid #f1f3f5;
             font-size: 14px;
+            color: #2c3e50;
         }
         
-        tr:hover {
+        .reviews-table tbody tr:hover {
             background: #f8f9fa;
+        }
+        
+        .reviewer-name {
+            font-weight: 600;
+        }
+        
+        .department-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            background: #e3f2fd;
+            color: #1976d2;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
         }
         
         .rating-stars {
@@ -367,281 +409,231 @@ $conn->close();
             font-size: 16px;
         }
         
-        .action-btn {
-            padding: 6px 12px;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 12px;
-            margin-right: 5px;
-            text-decoration: none;
-            display: inline-block;
-        }
-        
-        .btn-edit {
-            background: #007bff;
-            color: white;
-        }
-        
-        .btn-delete {
-            background: #dc3545;
-            color: white;
-        }
-        
-        .btn-edit:hover {
-            background: #0056b3;
-        }
-        
-        .btn-delete:hover {
-            background: #c82333;
-        }
-        
-        .dept-performance {
-            display: grid;
-            gap: 15px;
-        }
-        
-        .dept-bar {
-            display: flex;
-            align-items: center;
-            gap: 15px;
-        }
-        
-        .dept-name {
-            min-width: 250px;
-            font-size: 14px;
-            color: #333;
-            font-weight: 500;
-        }
-        
-        .dept-progress {
-            flex: 1;
-            height: 30px;
-            background: #f0f0f0;
-            border-radius: 15px;
+        .review-comment {
+            color: #7f8c8d;
+            max-width: 300px;
             overflow: hidden;
-            position: relative;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
         
-        .dept-progress-bar {
-            height: 100%;
-            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
-            display: flex;
-            align-items: center;
-            justify-content: flex-end;
-            padding-right: 10px;
-            color: white;
-            font-size: 12px;
-            font-weight: 600;
-            transition: width 0.5s;
-        }
-        
-        .activity-log {
+        .review-date {
+            color: #95a5a6;
             font-size: 13px;
         }
         
-        .activity-item {
-            padding: 12px;
-            border-left: 3px solid #667eea;
-            margin-bottom: 10px;
-            background: #f8f9fa;
-            border-radius: 5px;
+        .reviews-footer {
+            padding: 16px 24px;
+            border-top: 1px solid #e1e8ed;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
         
-        .activity-time {
-            color: #999;
-            font-size: 11px;
+        .showing-text {
+            font-size: 13px;
+            color: #7f8c8d;
+        }
+        
+        .view-all-btn {
+            padding: 8px 16px;
+            background: white;
+            border: 1px solid #e1e8ed;
+            border-radius: 6px;
+            font-size: 13px;
+            color: #2c3e50;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            text-decoration: none;
+        }
+        
+        .view-all-btn:hover {
+            background: #f8f9fa;
+        }
+        
+        @media (max-width: 1200px) {
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
         }
         
         @media (max-width: 768px) {
             .sidebar {
-                width: 100%;
-                position: relative;
-                height: auto;
-            }
-            
-            .main-content {
-                margin-left: 0;
+                position: fixed;
+                left: -280px;
+                z-index: 100;
             }
             
             .stats-grid {
                 grid-template-columns: 1fr;
             }
-            
-            .filter-bar {
-                flex-direction: column;
-            }
-            
-            .filter-bar select, .filter-bar input {
-                width: 100%;
-            }
         }
     </style>
 </head>
 <body>
-    <div class="sidebar">
+    <!-- Sidebar -->
+    <aside class="sidebar">
         <div class="sidebar-header">
-            <div class="icon">👨‍💼</div>
-            <h2><?php echo sanitize_output($_SESSION['user_name']); ?></h2>
-            <div class="badge">Administrator</div>
+            <div class="sidebar-icon">🏛️</div>
+            <div class="sidebar-title">
+                <h3>Church Workers</h3>
+                <p>Performance Review System</p>
+            </div>
         </div>
         
-        <div class="menu-section">
-            <h3>Menu</h3>
-            <div class="menu-item active">
-                <span class="icon">📊</span>
+        <nav class="sidebar-section">
+            <div class="sidebar-label">Menu</div>
+            <a href="admin_dashboard.php" class="sidebar-item active">
+                <span class="sidebar-item-icon">📊</span>
                 <span>Dashboard</span>
-            </div>
-            <a href="admin_reviews.php" class="menu-item">
-                <span class="icon">💬</span>
-                <span>All Reviews</span>
             </a>
-            <a href="admin_analytics.php" class="menu-item">
-                <span class="icon">📈</span>
-                <span>Analytics</span>
-            </a>
-        </div>
+        </nav>
         
-        <a href="logout.php" class="logout-btn">🚪 Logout</a>
-    </div>
+        <nav class="sidebar-section">
+            <div class="sidebar-label">All Departments</div>
+            <?php foreach (get_departments() as $dept): ?>
+                <a href="department_page.php?dept=<?php echo urlencode($dept); ?>" class="sidebar-item">
+                    <span class="sidebar-item-icon"><?php echo get_department_icon($dept); ?></span>
+                    <span><?php echo sanitize_output($dept); ?></span>
+                </a>
+            <?php endforeach; ?>
+        </nav>
+    </aside>
     
-    <div class="main-content">
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Top Bar -->
         <div class="top-bar">
-            <h1>Admin Dashboard</h1>
+            <div></div>
             <div class="user-info">
-                <div class="user-avatar"><?php echo strtoupper(substr($_SESSION['user_name'], 0, 1)); ?></div>
-                <div>
-                    <div style="font-weight: 600;"><?php echo sanitize_output($_SESSION['user_name']); ?></div>
-                    <div style="font-size: 12px; color: #666;">Administrator</div>
+                <div class="user-details">
+                    <h4><?php echo sanitize_output($_SESSION['user_name']); ?></h4>
+                    <p>Admin</p>
                 </div>
+                <div class="user-avatar">PF</div>
+                <a href="logout.php" class="logout-btn">
+                    <span>🚪</span>
+                    <span>Logout</span>
+                </a>
             </div>
         </div>
         
-        <?php if (isset($_GET['success'])): ?>
-            <div class="alert alert-success"><?php echo sanitize_output($_GET['success']); ?></div>
-        <?php endif; ?>
-        
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="stat-icon blue">💬</div>
-                <div class="stat-info">
-                    <h3>Total Reviews</h3>
-                    <p><?php echo $overall_stats['total_reviews']; ?></p>
+        <!-- Content Area -->
+        <div class="content-area">
+            <!-- Hero Section -->
+            <div class="hero-section">
+                <div class="hero-content">
+                    <div class="hero-icon">📊</div>
+                    <div class="hero-text">
+                        <h1>Admin Dashboard</h1>
+                        <p>Comprehensive overview of all reviews, performance metrics, and worker activities</p>
+                    </div>
                 </div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-icon green">⭐</div>
-                <div class="stat-info">
-                    <h3>Average Rating</h3>
-                    <p><?php echo number_format($overall_stats['avg_rating'], 1); ?></p>
-                </div>
-            </div>
-            <div class="stat-card">
-                <div class="stat-icon purple">🏢</div>
-                <div class="stat-info">
-                    <h3>Active Departments</h3>
-                    <p><?php echo $overall_stats['total_departments']; ?></p>
-                </div>
-            </div>
-        </div>
-        
-        <div class="section">
-            <div class="section-header">
-                <h2>Department Performance</h2>
             </div>
             
-            <div class="dept-performance">
-                <?php foreach ($dept_stats as $dept): ?>
-                    <div class="dept-bar">
-                        <div class="dept-name">
-                            <?php echo get_department_icon($dept['reviewer_department']); ?>
-                            <?php echo sanitize_output($dept['reviewer_department']); ?>
+            <!-- Stats Grid -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-content">
+                        <h3>Total Reviews</h3>
+                        <div class="value"><?php echo $total_reviews; ?></div>
+                    </div>
+                    <div class="stat-icon blue">📄</div>
+                </div>
+                
+                <div class="stat-card">
+                    <div class="stat-content">
+                        <h3>Average Rating</h3>
+                        <div class="value"><?php echo number_format($avg_rating, 1); ?></div>
+                    </div>
+                    <div class="stat-icon yellow">⭐</div>
+                </div>
+                
+                <div class="stat-card">
+                    <div class="stat-content">
+                        <h3>Pending Actions</h3>
+                        <div class="value"><?php echo $pending_actions; ?></div>
+                    </div>
+                    <div class="stat-icon purple">ℹ️</div>
+                </div>
+                
+                <div class="stat-card">
+                    <div class="stat-content">
+                        <h3>New Reviews Today</h3>
+                        <div class="value"><?php echo $new_today; ?></div>
+                    </div>
+                    <div class="stat-icon green">⚡</div>
+                </div>
+            </div>
+            
+            <!-- Recent Reviews Section -->
+            <div class="reviews-section">
+                <div class="section-header">
+                    <h2>Recent Reviews</h2>
+                    <a href="admin_reviews.php" class="view-all">View All →</a>
+                </div>
+                
+                <div class="reviews-container">
+                    <div class="reviews-toolbar">
+                        <div class="search-box">
+                            <input type="text" placeholder="Search by reviewer name or comment...">
                         </div>
-                        <div class="dept-progress">
-                            <div class="dept-progress-bar" style="width: <?php echo ($dept['avg_rating'] / 5 * 100); ?>%;">
-                                <?php echo number_format($dept['avg_rating'], 1); ?> ⭐ (<?php echo $dept['review_count']; ?> reviews)
-                            </div>
+                        
+                        <div class="filter-group">
+                            <span style="font-size: 14px; color: #7f8c8d;">Filter by Department</span>
+                            <select class="filter-select">
+                                <option>All Departments</option>
+                                <?php foreach (get_departments() as $dept): ?>
+                                    <option><?php echo sanitize_output($dept); ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                            
+                            <span style="font-size: 14px; color: #7f8c8d;">Sort By</span>
+                            <select class="filter-select">
+                                <option>Latest</option>
+                                <option>Rating</option>
+                                <option>Department</option>
+                            </select>
                         </div>
                     </div>
-                <?php endforeach; ?>
-            </div>
-        </div>
-        
-        <div class="section">
-            <div class="section-header">
-                <h2>All Reviews</h2>
-            </div>
-            
-            <form method="GET" class="filter-bar">
-                <select name="search_dept">
-                    <option value="">All Departments</option>
-                    <?php foreach (get_departments() as $dept): ?>
-                        <option value="<?php echo sanitize_output($dept); ?>" <?php echo ($search_dept === $dept) ? 'selected' : ''; ?>>
-                            <?php echo sanitize_output($dept); ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-                <input type="text" name="search_query" placeholder="Search by name or comment..." value="<?php echo sanitize_output($search_query); ?>">
-                <button type="submit">🔍 Search</button>
-            </form>
-            
-            <div class="table-container">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>ID</th>
-                            <th>Name</th>
-                            <th>Department</th>
-                            <th>Rating</th>
-                            <th>Comment</th>
-                            <th>Date</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <?php foreach ($reviews as $review): ?>
+                    
+                    <table class="reviews-table">
+                        <thead>
                             <tr>
-                                <td><?php echo $review['id']; ?></td>
-                                <td><?php echo sanitize_output($review['reviewer_name']); ?></td>
-                                <td><?php echo sanitize_output($review['reviewer_department']); ?></td>
-                                <td>
-                                    <span class="rating-stars">
-                                        <?php for ($i = 0; $i < $review['rating']; $i++): ?>★<?php endfor; ?>
-                                        <?php for ($i = $review['rating']; $i < 5; $i++): ?>☆<?php endfor; ?>
-                                    </span>
-                                </td>
-                                <td><?php echo substr(sanitize_output($review['comment']), 0, 50) . '...'; ?></td>
-                                <td><?php echo date('M d, Y', strtotime($review['created_at'])); ?></td>
-                                <td>
-                                    <a href="edit_review.php?id=<?php echo $review['id']; ?>" class="action-btn btn-edit">Edit</a>
-                                    <a href="?delete_review=<?php echo $review['id']; ?>" 
-                                       class="action-btn btn-delete" 
-                                       onclick="return confirm('Are you sure you want to delete this review?')">Delete</a>
-                                </td>
+                                <th>Reviewer</th>
+                                <th>Department</th>
+                                <th>Rating</th>
+                                <th>Comment</th>
+                                <th>Date</th>
                             </tr>
-                        <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-        
-        <div class="section">
-            <div class="section-header">
-                <h2>Recent Activity</h2>
-            </div>
-            
-            <div class="activity-log">
-                <?php foreach ($activity_logs as $log): ?>
-                    <div class="activity-item">
-                        <strong><?php echo sanitize_output($log['user_name']); ?></strong> - <?php echo sanitize_output($log['action']); ?>
-                        <?php if ($log['details']): ?>
-                            <br><small><?php echo sanitize_output($log['details']); ?></small>
-                        <?php endif; ?>
-                        <div class="activity-time"><?php echo date('M d, Y H:i', strtotime($log['created_at'])); ?></div>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($recent_reviews as $review): ?>
+                                <tr>
+                                    <td class="reviewer-name"><?php echo sanitize_output($review['reviewer_name']); ?></td>
+                                    <td><span class="department-badge"><?php echo sanitize_output($review['reviewer_department']); ?></span></td>
+                                    <td class="rating-stars">
+                                        <?php for($i = 0; $i < $review['rating']; $i++): ?>★<?php endfor; ?>
+                                    </td>
+                                    <td class="review-comment"><?php echo sanitize_output($review['comment']); ?></td>
+                                    <td class="review-date"><?php echo date('M d, Y', strtotime($review['created_at'])); ?></td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                    
+                    <div class="reviews-footer">
+                        <div class="showing-text">Showing <?php echo count($recent_reviews); ?> of <?php echo $total_reviews; ?> reviews</div>
+                        <a href="admin_reviews.php" class="view-all-btn">
+                            <span>⋯</span>
+                            <span>View All Reviews</span>
+                        </a>
                     </div>
-                <?php endforeach; ?>
+                </div>
             </div>
         </div>
-    </div>
+    </main>
 </body>
 </html>
