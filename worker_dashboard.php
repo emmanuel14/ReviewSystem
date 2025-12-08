@@ -1,80 +1,9 @@
-<?php
-require_once 'config.php';
-require_login();
-
-$conn = getDBConnection();
-$user_department = $_SESSION['department'];
-$user_name = $_SESSION['user_name'];
-
-// Handle multiple department reviews submission
-$success_message = '';
-$error_message = '';
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_all_reviews'])) {
-    $overall_rating = intval($_POST['overall_rating'] ?? 0);
-    $overall_comment = trim($_POST['overall_comment'] ?? '');
-    
-    $submitted_count = 0;
-    $departments = get_departments();
-    
-    // Submit individual department reviews
-    foreach ($departments as $index => $dept) {
-        $rating = intval($_POST["rating_$index"] ?? 0);
-        $comment = trim($_POST["comment_$index"] ?? '');
-        
-        if ($rating > 0 && !empty($comment)) {
-            $stmt = $conn->prepare("INSERT INTO reviews (reviewer_name, reviewer_department, rating, comment) VALUES (?, ?, ?, ?)");
-            $stmt->bind_param("ssis", $user_name, $dept, $rating, $comment);
-            $stmt->execute();
-            $stmt->close();
-            $submitted_count++;
-        }
-    }
-    
-    // Submit overall service review if provided
-    if ($overall_rating > 0 && !empty($overall_comment)) {
-        $overall_dept = "Overall Service";
-        $stmt = $conn->prepare("INSERT INTO reviews (reviewer_name, reviewer_department, rating, comment) VALUES (?, ?, ?, ?)");
-        $stmt->bind_param("ssis", $user_name, $overall_dept, $overall_rating, $overall_comment);
-        $stmt->execute();
-        $stmt->close();
-    }
-    
-    if ($submitted_count > 0 || ($overall_rating > 0 && !empty($overall_comment))) {
-        $success_message = 'Thank you for your feedback!';
-        log_activity($conn, $user_name, 'Submit Reviews', "Submitted $submitted_count department reviews");
-        
-        // Redirect to prevent resubmission
-        header("Location: worker_dashboard.php?success=1");
-        exit();
-    } else {
-        $error_message = 'Please rate at least one department.';
-    }
-}
-
-// Check for success parameter
-if (isset($_GET['success'])) {
-    $success_message = 'Thank you for your feedback!';
-}
-
-// Calculate department statistics
-$dept_stats_query = "SELECT reviewer_department, AVG(rating) as avg_rating, COUNT(*) as review_count FROM reviews WHERE visible_to_workers = 'Yes' GROUP BY reviewer_department";
-$dept_stats_result = $conn->query($dept_stats_query);
-$dept_stats = [];
-while ($row = $dept_stats_result->fetch_assoc()) {
-    $dept_stats[$row['reviewer_department']] = $row;
-}
-
-$conn->close();
-
-$color_palette = ['#8B5CF6', '#EC4899', '#F59E0B', '#10B981', '#06B6D4', '#3B82F6', '#6366F1'];
-?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rate Today's Service - Church Workers</title>
+    <title>Worker Dashboard - CWPRS</title>
     <style>
         * {
             margin: 0;
@@ -83,490 +12,510 @@ $color_palette = ['#8B5CF6', '#EC4899', '#F59E0B', '#10B981', '#06B6D4', '#3B82F
         }
         
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(to bottom right, #f3e7ff, #e0e7ff);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            background: #f8f9fb;
+            color: #333;
+        }
+        
+        .container {
+            display: flex;
             min-height: 100vh;
         }
         
-        .navbar {
-            background: linear-gradient(to right, #7c3aed, #2563eb, #4f46e5);
-            color: white;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
-            position: sticky;
-            top: 0;
-            z-index: 100;
-        }
-        
-        .navbar-container {
-            max-width: 1400px;
-            margin: 0 auto;
-            padding: 0 20px;
+        /* Sidebar */
+        .sidebar {
+            width: 240px;
+            background: white;
+            border-right: 1px solid #e5e7eb;
+            padding: 24px 16px;
+            position: fixed;
+            height: 100vh;
+            overflow-y: auto;
             display: flex;
-            justify-content: space-between;
-            align-items: center;
-            height: 64px;
+            flex-direction: column;
         }
         
-        .navbar-brand {
+        .logo {
             display: flex;
             align-items: center;
             gap: 12px;
+            margin-bottom: 32px;
+            padding-bottom: 24px;
+            border-bottom: 1px solid #e5e7eb;
         }
         
-        .navbar-icon {
-            font-size: 32px;
-        }
-        
-        .navbar-text h1 {
-            font-size: 18px;
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, #0d9488 0%, #06b6d4 100%);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            color: white;
             font-weight: 700;
         }
         
-        .navbar-text p {
-            font-size: 12px;
-            color: rgba(233, 213, 255, 0.9);
+        .logo-text h3 {
+            font-size: 14px;
+            font-weight: 700;
+            color: #1f2937;
         }
         
-        .navbar-user {
+        .logo-text p {
+            font-size: 11px;
+            color: #9ca3af;
+            margin-top: 2px;
+        }
+        
+        .nav-menu {
+            flex: 1;
+        }
+        
+        .nav-item {
             display: flex;
             align-items: center;
-            gap: 15px;
+            gap: 12px;
+            padding: 12px 16px;
+            margin-bottom: 8px;
+            border-radius: 8px;
+            color: #6b7280;
+            text-decoration: none;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 14px;
         }
         
-        .logout-btn {
-            padding: 8px 20px;
-            background: rgba(255, 255, 255, 0.2);
+        .nav-item:hover {
+            background: #f3f4f6;
+            color: #1f2937;
+        }
+        
+        .nav-item.active {
+            background: #f0f9ff;
+            color: #0369a1;
+            border-left: 3px solid #0369a1;
+            padding-left: 13px;
+        }
+        
+        .nav-icon {
+            font-size: 18px;
+            width: 20px;
+        }
+        
+        .logout {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            margin-top: auto;
+            color: #ef4444;
+            text-decoration: none;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        
+        .logout:hover {
+            background: #fee2e2;
+        }
+        
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            margin-left: 240px;
+        }
+        
+        .header {
+            background: white;
+            border-bottom: 1px solid #e5e7eb;
+            padding: 20px 32px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        
+        .header-title h1 {
+            font-size: 24px;
+            font-weight: 700;
+            color: #1f2937;
+            margin-bottom: 4px;
+        }
+        
+        .header-title p {
+            font-size: 14px;
+            color: #6b7280;
+        }
+        
+        .submit-btn {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #001f3f 0%, #003d7a 100%);
             color: white;
             border: none;
             border-radius: 8px;
+            font-size: 14px;
             font-weight: 600;
             cursor: pointer;
             transition: all 0.2s;
             text-decoration: none;
-            display: inline-block;
-            font-size: 14px;
         }
         
-        .logout-btn:hover {
-            background: rgba(255, 255, 255, 0.3);
+        .submit-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(0, 31, 63, 0.3);
         }
         
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-            padding: 32px 16px;
+        .content {
+            padding: 32px;
         }
         
-        .page-header {
-            text-align: center;
+        .hero-section {
+            background: linear-gradient(135deg, #001f3f 0%, #003d7a 100%);
+            border-radius: 12px;
+            padding: 32px;
+            color: white;
+            margin-bottom: 32px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .hero-icon {
+            font-size: 64px;
+            opacity: 0.8;
+        }
+        
+        .hero-text h2 {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+        
+        .hero-text p {
+            font-size: 15px;
+            opacity: 0.9;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
             margin-bottom: 32px;
         }
         
-        .page-header h2 {
-            font-size: 36px;
+        .stat-card {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            border: 1px solid #e5e7eb;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+        
+        .stat-content h3 {
+            font-size: 13px;
+            color: #9ca3af;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 12px;
+            font-weight: 600;
+        }
+        
+        .stat-value {
+            font-size: 32px;
             font-weight: 700;
             color: #1f2937;
             margin-bottom: 8px;
         }
         
-        .page-header p {
-            font-size: 16px;
-            color: #6b7280;
-        }
-        
-        .alert {
-            max-width: 800px;
-            margin: 0 auto 24px;
-            padding: 16px 24px;
-            border-radius: 12px;
-            font-size: 14px;
+        .stat-change {
+            font-size: 13px;
             font-weight: 600;
-            text-align: center;
-            animation: slideDown 0.3s ease-out;
-        }
-        
-        @keyframes slideDown {
-            from {
-                opacity: 0;
-                transform: translateY(-20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-        
-        .alert-success {
-            background: #d1fae5;
-            color: #065f46;
-            border-left: 4px solid #10b981;
-        }
-        
-        .alert-error {
-            background: #fee2e2;
-            color: #991b1b;
-            border-left: 4px solid #ef4444;
-        }
-        
-        .departments-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-            gap: 24px;
-            margin-bottom: 48px;
-        }
-        
-        .dept-card {
-            background: white;
-            border-radius: 16px;
-            padding: 24px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-            transition: all 0.3s;
-            border: 2px solid transparent;
-        }
-        
-        .dept-card:hover {
-            transform: translateY(-8px);
-            box-shadow: 0 12px 24px rgba(0, 0, 0, 0.15);
-            border-color: #a78bfa;
-        }
-        
-        .dept-header {
             display: flex;
             align-items: center;
-            gap: 12px;
-            margin-bottom: 16px;
+            gap: 4px;
         }
         
-        .dept-icon {
-            width: 64px;
-            height: 64px;
-            border-radius: 12px;
+        .stat-change.positive {
+            color: #10b981;
+        }
+        
+        .stat-change.negative {
+            color: #ef4444;
+        }
+        
+        .stat-icon {
+            width: 48px;
+            height: 48px;
+            background: #f3f4f6;
+            border-radius: 10px;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 32px;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            font-size: 24px;
         }
         
-        .dept-info {
-            flex: 1;
+        .reviews-section {
+            background: white;
+            border-radius: 12px;
+            border: 1px solid #e5e7eb;
+            overflow: hidden;
         }
         
-        .dept-name {
+        .reviews-header {
+            padding: 24px 32px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        
+        .reviews-header h2 {
+            font-size: 18px;
             font-weight: 700;
             color: #1f2937;
+        }
+        
+        .review-item {
+            padding: 24px 32px;
+            border-bottom: 1px solid #f3f4f6;
+            transition: background 0.2s;
+        }
+        
+        .review-item:hover {
+            background: #f9fafb;
+        }
+        
+        .review-item:last-child {
+            border-bottom: none;
+        }
+        
+        .review-title {
             font-size: 15px;
-            margin-bottom: 2px;
+            font-weight: 700;
+            color: #1f2937;
+            margin-bottom: 8px;
         }
         
-        .dept-subtitle {
-            font-size: 10px;
+        .review-text {
+            font-size: 14px;
             color: #6b7280;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
+            line-height: 1.6;
+            margin-bottom: 12px;
+            font-style: italic;
         }
         
-        .star-rating {
+        .review-meta {
             display: flex;
-            gap: 8px;
-            margin-bottom: 16px;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .review-source {
+            font-size: 12px;
+            color: #9ca3af;
+        }
+        
+        .review-stars {
+            display: flex;
+            gap: 4px;
+            font-size: 16px;
         }
         
         .star {
-            cursor: pointer;
-            color: #d1d5db;
-            font-size: 20px;
-            transition: all 0.2s;
-        }
-        
-        .star.active {
             color: #fbbf24;
         }
         
-        .star:hover {
-            transform: scale(1.1);
-        }
-        
-        .comment-box {
-            width: 100%;
-            padding: 12px;
-            border: 2px solid #e5e7eb;
-            border-radius: 8px;
-            font-size: 13px;
-            font-family: inherit;
-            resize: none;
-            transition: border-color 0.3s;
-        }
-        
-        .comment-box:focus {
-            outline: none;
-            border-color: #a78bfa;
-        }
-        
-        .overall-section {
-            max-width: 672px;
-            margin: 0 auto;
-            background: linear-gradient(to bottom right, #7c3aed, #2563eb);
-            border-radius: 16px;
-            padding: 32px;
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
-            color: white;
-        }
-        
-        .overall-section h3 {
-            font-size: 24px;
-            font-weight: 700;
-            text-align: center;
-            margin-bottom: 24px;
-        }
-        
-        .overall-stars {
-            display: flex;
-            justify-content: center;
-            gap: 12px;
-            margin-bottom: 24px;
-        }
-        
-        .overall-stars .star {
-            font-size: 40px;
-            color: #d1d5db;
-        }
-        
-        .overall-stars .star.active {
-            color: #fbbf24;
-        }
-        
-        .overall-comment {
-            width: 100%;
-            padding: 12px 16px;
-            border-radius: 12px;
-            font-size: 14px;
-            font-family: inherit;
-            resize: none;
-            border: 2px solid white;
-            margin-bottom: 24px;
-        }
-        
-        .overall-comment:focus {
-            outline: none;
-        }
-        
-        .submit-btn {
-            width: 100%;
-            padding: 16px;
-            background: white;
-            color: #7c3aed;
-            border: none;
-            border-radius: 12px;
-            font-size: 18px;
-            font-weight: 700;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        
-        .submit-btn:hover {
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
-            transform: translateY(-2px);
-        }
-        
+        /* Responsive */
         @media (max-width: 768px) {
-            .departments-grid {
+            .sidebar {
+                width: 100%;
+                height: auto;
+                position: relative;
+                border-right: none;
+                border-bottom: 1px solid #e5e7eb;
+                padding: 16px;
+            }
+            
+            .main-content {
+                margin-left: 0;
+            }
+            
+            .container {
+                flex-direction: column;
+            }
+            
+            .header {
+                flex-direction: column;
+                gap: 16px;
+                align-items: flex-start;
+            }
+            
+            .stats-grid {
                 grid-template-columns: 1fr;
             }
             
-            .navbar-container {
+            .hero-section {
                 flex-direction: column;
-                height: auto;
-                padding: 16px 20px;
-                gap: 12px;
+                text-align: center;
             }
             
-            .page-header h2 {
-                font-size: 28px;
+            .hero-icon {
+                margin-bottom: 16px;
             }
         }
     </style>
 </head>
 <body>
-    <nav class="navbar">
-        <div class="navbar-container">
-            <div class="navbar-brand">
-                <div class="navbar-icon">⛪</div>
-                <div class="navbar-text">
-                    <h1>Church Rating</h1>
-                    <p>Welcome, <?php echo sanitize_output($user_name); ?></p>
-                </div>
-            </div>
-            
-            <div class="navbar-user">
-                <a href="logout.php" class="logout-btn">Logout</a>
-            </div>
-        </div>
-    </nav>
-    
     <div class="container">
-        <div class="page-header">
-            <h2>Rate Today's Service</h2>
-            <p>Your feedback helps us serve better</p>
-        </div>
-        
-        <?php if ($success_message): ?>
-            <div class="alert alert-success">✅ <?php echo sanitize_output($success_message); ?></div>
-        <?php endif; ?>
-        
-        <?php if ($error_message): ?>
-            <div class="alert alert-error">❌ <?php echo sanitize_output($error_message); ?></div>
-        <?php endif; ?>
-        
-        <form method="POST" action="" id="ratingForm">
-            <div class="departments-grid">
-                <?php 
-                $departments = get_departments();
-                foreach ($departments as $index => $dept): 
-                    $color = $color_palette[$index % count($color_palette)];
-                ?>
-                    <div class="dept-card">
-                        <div class="dept-header">
-                            <div class="dept-icon" style="background-color: <?php echo $color; ?>20;">
-                                <?php echo get_department_icon($dept); ?>
-                            </div>
-                            <div class="dept-info">
-                                <div class="dept-name"><?php echo sanitize_output($dept); ?></div>
-                                <div class="dept-subtitle">
-                                    <?php 
-                                    if (isset($dept_stats[$dept])) {
-                                        echo number_format($dept_stats[$dept]['avg_rating'], 1) . " ⭐ • " . 
-                                             $dept_stats[$dept]['review_count'] . " reviews";
-                                    } else {
-                                        echo "No ratings yet";
-                                    }
-                                    ?>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <div class="star-rating" data-dept="<?php echo $index; ?>">
-                            <span class="star" data-rating="1">★</span>
-                            <span class="star" data-rating="2">★</span>
-                            <span class="star" data-rating="3">★</span>
-                            <span class="star" data-rating="4">★</span>
-                            <span class="star" data-rating="5">★</span>
-                        </div>
-                        <input type="hidden" name="rating_<?php echo $index; ?>" id="rating_<?php echo $index; ?>" value="0">
-                        
-                        <textarea 
-                            name="comment_<?php echo $index; ?>" 
-                            class="comment-box" 
-                            rows="2" 
-                            placeholder="Add your comments (optional)"
-                        ></textarea>
-                    </div>
-                <?php endforeach; ?>
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="logo">
+                <div class="logo-icon">⛪</div>
+                <div class="logo-text">
+                    <h3>CWPRS</h3>
+                    <p>Performance Review</p>
+                </div>
             </div>
             
-            <div class="overall-section">
-                <h3>Overall Service Rating</h3>
-                
-                <div class="overall-stars" id="overallStars">
-                    <span class="star" data-rating="1">★</span>
-                    <span class="star" data-rating="2">★</span>
-                    <span class="star" data-rating="3">★</span>
-                    <span class="star" data-rating="4">★</span>
-                    <span class="star" data-rating="5">★</span>
+            <nav class="nav-menu">
+                <a href="#" class="nav-item active">
+                    <span class="nav-icon">📊</span>
+                    <span>Dashboard</span>
+                </a>
+                <a href="#" class="nav-item">
+                    <span class="nav-icon">📝</span>
+                    <span>Reviews</span>
+                </a>
+                <a href="#" class="nav-item">
+                    <span class="nav-icon">➕</span>
+                    <span>Submit Review</span>
+                </a>
+                <a href="#" class="nav-item">
+                    <span class="nav-icon">👤</span>
+                    <span>Profile</span>
+                </a>
+            </nav>
+            
+            <a href="#" class="logout">
+                <span class="nav-icon">🚪</span>
+                <span>Logout</span>
+            </a>
+        </aside>
+        
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Header -->
+            <div class="header">
+                <div class="header-title">
+                    <h1>Worker Dashboard</h1>
+                    <p>Welcome back, here's your department's performance overview.</p>
                 </div>
-                <input type="hidden" name="overall_rating" id="overall_rating" value="0">
-                
-                <textarea 
-                    name="overall_comment" 
-                    class="overall-comment" 
-                    rows="4" 
-                    placeholder="Share your overall experience..."
-                ></textarea>
-                
-                <button type="submit" name="submit_all_reviews" class="submit-btn">
-                    Submit Ratings
+                <button class="submit-btn">
+                    <span>📋</span>
+                    <span>Submit a Review</span>
                 </button>
             </div>
-        </form>
-    </div>
-    
-    <script>
-        // Individual department star ratings
-        document.querySelectorAll('.dept-card .star-rating').forEach(ratingContainer => {
-            const stars = ratingContainer.querySelectorAll('.star');
-            const deptIndex = ratingContainer.getAttribute('data-dept');
-            const hiddenInput = document.getElementById('rating_' + deptIndex);
             
-            stars.forEach(star => {
-                star.addEventListener('click', function() {
-                    const rating = this.getAttribute('data-rating');
-                    hiddenInput.value = rating;
+            <!-- Content -->
+            <div class="content">
+                <!-- Hero Section -->
+                <div class="hero-section">
+                    <div>
+                        <h2>Welcome & Hospitality Team</h2>
+                    </div>
+                    <div class="hero-icon">👥</div>
+                </div>
+                
+                <!-- Stats Grid -->
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div>
+                            <div class="stat-content">
+                                <h3>⭐ Average Rating</h3>
+                            </div>
+                            <div class="stat-value">4.8</div>
+                            <div class="stat-change positive">↑ +5.2% from last month</div>
+                        </div>
+                        <div class="stat-icon">⭐</div>
+                    </div>
                     
-                    stars.forEach(s => {
-                        if (s.getAttribute('data-rating') <= rating) {
-                            s.classList.add('active');
-                        } else {
-                            s.classList.remove('active');
-                        }
-                    });
-                });
+                    <div class="stat-card">
+                        <div>
+                            <div class="stat-content">
+                                <h3>📋 Total Reviews</h3>
+                            </div>
+                            <div class="stat-value">1,234</div>
+                            <div class="stat-change negative">↓ -1.5% from last month</div>
+                        </div>
+                        <div class="stat-icon">📋</div>
+                    </div>
+                </div>
                 
-                star.addEventListener('mouseenter', function() {
-                    const rating = this.getAttribute('data-rating');
-                    stars.forEach(s => {
-                        if (s.getAttribute('data-rating') <= rating) {
-                            s.style.color = '#fbbf24';
-                        }
-                    });
-                });
-            });
-            
-            ratingContainer.addEventListener('mouseleave', function() {
-                const currentRating = hiddenInput.value;
-                stars.forEach(s => {
-                    if (s.getAttribute('data-rating') > currentRating) {
-                        s.style.color = '#d1d5db';
-                    }
-                });
-            });
-        });
-        
-        // Overall service star rating
-        const overallStars = document.querySelectorAll('#overallStars .star');
-        const overallInput = document.getElementById('overall_rating');
-        
-        overallStars.forEach(star => {
-            star.addEventListener('click', function() {
-                const rating = this.getAttribute('data-rating');
-                overallInput.value = rating;
-                
-                overallStars.forEach(s => {
-                    if (s.getAttribute('data-rating') <= rating) {
-                        s.classList.add('active');
-                    } else {
-                        s.classList.remove('active');
-                    }
-                });
-            });
-            
-            star.addEventListener('mouseenter', function() {
-                const rating = this.getAttribute('data-rating');
-                overallStars.forEach(s => {
-                    if (s.getAttribute('data-rating') <= rating) {
-                        s.style.color = '#fbbf24';
-                    }
-                });
-            });
-        });
-        
-        document.getElementById('overallStars').addEventListener('mouseleave', function() {
-            const currentRating = overallInput.value;
-            overallStars.forEach(s => {
-                if (s.getAttribute('data-rating') > currentRating) {
-                    s.style.color = '#d1d5db';
-                }
-            });
-        });
-    </script>
+                <!-- Recent Reviews -->
+                <div class="reviews-section">
+                    <div class="reviews-header">
+                        <h2>Recent Department Reviews</h2>
+                    </div>
+                    
+                    <div class="review-item">
+                        <div class="review-title">Excellent Service</div>
+                        <div class="review-text">
+                            "The hospitality team was incredibly welcoming and made our first visit feel like coming home. Their warmth and guidance were truly a blessing."
+                        </div>
+                        <div class="review-meta">
+                            <span class="review-source">From: Guest Services Department</span>
+                            <div class="review-stars">
+                                <span class="star">★</span>
+                                <span class="star">★</span>
+                                <span class="star">★</span>
+                                <span class="star">★</span>
+                                <span class="star">★</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="review-item">
+                        <div class="review-title">Areas for Improvement</div>
+                        <div class="review-text">
+                            "While the team was friendly, there seemed to be some confusion about event scheduling. Clearer communication would be beneficial."
+                        </div>
+                        <div class="review-meta">
+                            <span class="review-source">From: Children's Ministry</span>
+                            <div class="review-stars">
+                                <span class="star">★</span>
+                                <span class="star">★</span>
+                                <span class="star">★</span>
+                                <span class="star">★</span>
+                                <span class="star">★</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="review-item">
+                        <div class="review-title">Supportive and Organized</div>
+                        <div class="review-text">
+                            "The setup for the community outreach event was flawless. The team worked together seamlessly and created a wonderful atmosphere for everyone involved."
+                        </div>
+                        <div class="review-meta">
+                            <span class="review-source">From: Outreach Department</span>
+                            <div class="review-stars">
+                                <span class="star">★</span>
+                                <span class="star">★</span>
+                                <span class="star">★</span>
+                                <span class="star">★</span>
+                                <span class="star">★</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
 </body>
 </html>
