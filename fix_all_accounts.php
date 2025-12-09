@@ -1,9 +1,6 @@
 <?php
 /**
- * Fix All Accounts Script
- * Creates/Updates both Admin and Worker accounts
- * 
- * ⚠️ DELETE THIS FILE AFTER USE FOR SECURITY!
+ 
  */
 
 error_reporting(E_ALL);

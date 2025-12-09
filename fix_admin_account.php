@@ -1,10 +1,5 @@
 <?php
-/**
- * Admin Account Fix Script
- * This will create/update the admin account with correct credentials
- * 
- * ⚠️ DELETE THIS FILE AFTER USE FOR SECURITY!
- */
+
 
 error_reporting(E_ALL);
 ini_set('display_errors', 1);

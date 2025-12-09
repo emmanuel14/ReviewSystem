@@ -1,11 +1,6 @@
 <?php
 /**
- * Database Connection Test & Login Diagnostic
- * 
- * This file will help diagnose why you can't login
- * Upload this file and access it via browser
- * 
- * ⚠️ DELETE THIS FILE AFTER TROUBLESHOOTING!
+
  */
 
 error_reporting(E_ALL);
