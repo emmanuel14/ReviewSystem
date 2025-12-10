@@ -514,7 +514,7 @@ $dept_bg = isset($dept_info[$dept_name]) ? $dept_info[$dept_name]['bg'] : 'linea
                 <div class="feedback-card">
                     <div class="feedback-content">
                         <h2>Share Your Feedback</h2>
-                        <p>Help us improve by submitting a review for this department</p>
+                        <p>Help us improve by submitting a review for this department.</p>
                     </div>
                     <a href="worker_dashboard.php#submit-review" class="submit-btn">
                         <span>+</span>
