@@ -1,18 +1,5 @@
 <?php
-/**
- * Password Hash Generator
- * 
- * This file helps you generate secure password hashes for the workers table.
- * 
- * IMPORTANT: Delete this file after generating your passwords for security!
- * 
- * Usage:
- * 1. Upload this file to your server
- * 2. Access it via browser: http://your-domain.com/generate_password.php
- * 3. Enter passwords to generate hashes
- * 4. Copy the hashes to your SQL INSERT statements
- * 5. DELETE THIS FILE after use
- */
+
 
 $generated_hash = '';
 $password_to_hash = '';

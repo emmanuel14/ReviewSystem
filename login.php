@@ -1,10 +1,4 @@
 <?php
-/**
- * Church Workers Performance Review System
- * Login Page
- * 
- * Handles user authentication with phone number and password
- */
 
 require_once 'config.php';
 
