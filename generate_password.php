@@ -191,7 +191,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </div>
         
         <h1>🔐 Password Hash Generator</h1>
-        <p>Generate secure bcrypt hashes for worker passwords</p>
+        <p>Generate secure bcrypt hashes for worker passwords.</p>
         
         <form method="POST">
             <div class="form-group">
